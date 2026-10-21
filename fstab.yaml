@@ -1,0 +1,4 @@
+mountpoints:
+  /:
+    url: https://content.da.live/edshol/hol4da/
+    type: markup
