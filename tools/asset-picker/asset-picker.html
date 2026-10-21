@@ -42,7 +42,7 @@
 
   <script type="module">
     const $dbg = document.getElementById('dbg');
-    const dbg = (m) => { $dbg.innerHTML += `${m}\n`; };
+    const dbg = (m) => { $dbg.innerHTML += `${m}\n`; try { console.log('[asset-picker]', m); } catch {} };
     window.addEventListener('error', (e) => dbg(`err: ${e.message}`));
     window.addEventListener('unhandledrejection', (e) => dbg(`rej: ${e.reason?.message || e.reason}`));
 
@@ -71,13 +71,14 @@
     // Authenticated AEM binary URL for an asset (original preferred, then a rendition).
     function binarySourceUrl(a) {
       const host = a['repo:repositoryId'];
-      const dampath = a['repo:path'] || a.path;
       const assetId = a['repo:assetId'] || a['repo:id'];
+      const dampath = a['repo:path'] || a.path;
+      // /adobe/assets/<id> returns the asset binary directly (filename-independent, verified).
+      if (host && assetId) return `https://${host}${BASE}/${assetId}`;
       if (host && dampath) return `https://${host}${dampath}`;
       const rend = a._links && a._links[RENDITION_REL];
       if (Array.isArray(rend) && rend[0] && rend[0].href) return rend[0].href;
       if (rend && rend.href) return rend.href;
-      if (host && assetId) return `https://${host}${BASE}/${assetId}/original`;
       return '';
     }
     function extFor(mime, name) {
@@ -164,8 +165,13 @@
           } catch (err) { dbg(`import failed: ${err.message}`); }
         }
         const html = parts.join('');
-        if (html && window.opener) window.opener.postMessage({ pickedHtml: html }, '*');
-        window.close();
+        if (html && window.opener) {
+          window.opener.postMessage({ pickedHtml: html }, '*');
+          window.close();
+          return;
+        }
+        // Nothing imported — keep this window open so the log stays readable.
+        dbg('— no image inserted; window kept open. Check the log above.');
       }
 
       function render(token) {
