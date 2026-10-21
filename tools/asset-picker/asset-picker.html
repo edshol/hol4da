@@ -112,23 +112,45 @@
         if (!bres.ok) throw new Error(`AEM fetch ${bres.status}`);
         const blob = await bres.blob();
         if (!ctx || !ctx.org || !ctx.repo || !ctx.path) throw new Error('no doc context');
+        const ref = ctx.ref || 'main';
         const parent = ctx.path.replace(/\/[^/]*$/, '');
         const docname = ctx.path.split('/').pop();
         const ext = extFor(blob.type, a['repo:name'] || a.name);
         const file = `${slugName(a['repo:name'] || a.name)}.${ext}`;
-        const srcPath = `/${ctx.org}/${ctx.repo}${parent}/.${docname}/${file}`;
+        const webPath = `${parent}/.${docname}/${file}`;        // helix path (no org/repo)
+        const srcPath = `/${ctx.org}/${ctx.repo}${webPath}`;    // da-admin source path
+
+        // 1) upload the binary into the doc's media sidecar.
         const fd = new FormData();
         fd.append('data', new Blob([blob], { type: blob.type || `image/${ext}` }));
         const ures = await fetch(`https://admin.da.live/source${srcPath}`, {
           method: 'POST', headers: { Authorization: `Bearer ${imsToken}` }, body: fd,
         });
         if (!ures.ok) throw new Error(`da upload ${ures.status}`);
-        let json = {};
-        try { json = await ures.json(); } catch { /* some backends return empty */ }
-        const contentUrl = (json.source && json.source.contentUrl) || json.contentUrl || '';
-        if (contentUrl) { dbg(`uploaded → ${contentUrl}`); return contentUrl; }
-        // Fallback: published media path derived from the upload path.
-        return `https://main--${ctx.repo}--${ctx.org}.aem.page${parent}/${file}`;
+        let uj = {};
+        try { uj = await ures.json(); } catch { /* may be empty */ }
+        const contentUrl = (uj.source && uj.source.contentUrl) || uj.contentUrl || '';
+
+        // 2) preview the media so helix content-addresses it, then insert the
+        // relative ./media_<hash> src — it renders both in the editor (Canvas
+        // rewrites it to the preview origin) and on the published page.
+        try {
+          const pres = await fetch(`https://admin.hlx.page/preview/${ctx.org}/${ctx.repo}/${ref}${webPath}`, {
+            method: 'POST', headers: { Authorization: `Bearer ${imsToken}` },
+          });
+          if (pres.ok) {
+            const pj = await pres.json();
+            const rl = (pj.preview && pj.preview.redirectLocation) || '';
+            const m = rl.match(/media_[0-9a-f]+\.[a-z0-9]+$/i);
+            if (m) { dbg(`media → ./${m[0]}`); return `./${m[0]}`; }
+            dbg('no redirectLocation in preview');
+          } else { dbg(`preview ${pres.status}`); }
+        } catch (e) { dbg(`preview err: ${e.message}`); }
+
+        // Fallback: the content.da.live source URL. It still localizes to the
+        // media bus when the doc is published, but may show broken in-editor.
+        if (contentUrl) { dbg(`fallback → ${contentUrl}`); return contentUrl; }
+        throw new Error('no renderable src');
       }
 
       async function handleSelection(assets) {
@@ -215,7 +237,9 @@
 
       $browse.addEventListener('click', () => {
         if (!daToken) return;
-        const url = `${location.pathname}?mode=popup`;
+        // Cache-bust so the popup always loads the current build (the opener
+        // and popup are the same file; a stale cached popup runs old code).
+        const url = `${location.pathname}?mode=popup&v=${Date.now()}`;
         popup = window.open(url, 'aem-asset-picker', 'width=1200,height=820,resizable=yes,scrollbars=yes');
         if (!popup) dbg('popup blocked — allow popups for da.live');
       });
