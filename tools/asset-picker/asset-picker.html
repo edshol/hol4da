@@ -61,31 +61,32 @@
     const isImage = (a) => (a.mimetype || a['dc:format'] || '').toLowerCase().startsWith('image/');
     const esc = (s = '') => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-    function resolveAssetUrl(a) {
-      const host = a['repo:repositoryId'];
-      const assetId = a['repo:assetId'] || a['repo:id'];
-      const name = a['repo:name'] || a.name || '';
-      if (host && assetId) {
-        if (isImage(a)) return `https://${host}${BASE}/${assetId}/as/${seo(name)}.avif`;
-        return `https://${host}${BASE}/${assetId}/original/as/${name}`;
-      }
-      const rend = a._links && a._links[RENDITION_REL];
-      if (Array.isArray(rend) && rend[0] && rend[0].href) return rend[0].href;
-      if (a.path && host) return `https://${host.replace('author', 'publish')}${a.path}`;
-      return '';
-    }
     function altOf(a) {
       const meta = a._embedded && a._embedded['http://ns.adobe.com/adobecloud/rel/metadata/asset'];
       return (meta && (meta['Iptc4xmpExt:ExtDescrAccessibility'] || meta['dc:description'] || meta['dc:title']))
         || (a['dc:title'] && (a['dc:title']['o:default'] || a['dc:title']))
         || a.name || '';
     }
-    function assetsToHtml(assets) {
-      return (Array.isArray(assets) ? assets : [assets])
-        .map((a) => ({ src: resolveAssetUrl(a), alt: altOf(a) }))
-        .filter((x) => x.src)
-        .map((x) => `<p><img src="${esc(x.src)}" alt="${esc(x.alt)}"></p>`)
-        .join('');
+
+    // Authenticated AEM binary URL for an asset (original preferred, then a rendition).
+    function binarySourceUrl(a) {
+      const host = a['repo:repositoryId'];
+      const dampath = a['repo:path'] || a.path;
+      const assetId = a['repo:assetId'] || a['repo:id'];
+      if (host && dampath) return `https://${host}${dampath}`;
+      const rend = a._links && a._links[RENDITION_REL];
+      if (Array.isArray(rend) && rend[0] && rend[0].href) return rend[0].href;
+      if (rend && rend.href) return rend.href;
+      if (host && assetId) return `https://${host}${BASE}/${assetId}/original`;
+      return '';
+    }
+    function extFor(mime, name) {
+      let ext = (mime && mime.split('/')[1]) || (name && name.includes('.') ? name.split('.').pop() : '') || 'jpg';
+      ext = ext.toLowerCase().split('+')[0];
+      return ext === 'jpeg' ? 'jpg' : ext;
+    }
+    function slugName(name) {
+      return (seo(name) || 'image').replace(/[^a-z0-9-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'image';
     }
 
     // =====================================================================
@@ -95,8 +96,58 @@
     if (isPopup) {
       document.getElementById('root').innerHTML = '<div id="selector" style="height:100vh"></div>';
       const $selector = document.getElementById('selector');
+      let imsToken = null;
+      let ctx = null; // { org, repo, path } of the doc being edited
+
+      // Fetch the asset binary from AEM (authenticated), upload it into the
+      // doc's media sidecar via the da.live Source API, and return the
+      // renderable src the server assigns (e.g. ./media_<hash>.jpg). This is
+      // the same media-bus path da.live uses for drag-and-drop, so the image
+      // is served publicly with no AEM runtime dependency.
+      async function importAsset(a) {
+        const binUrl = binarySourceUrl(a);
+        if (!binUrl) throw new Error('no binary url');
+        dbg(`fetch: ${binUrl.replace(/^https?:\/\//, '').slice(0, 64)}…`);
+        const bres = await fetch(binUrl, { headers: { Authorization: `Bearer ${imsToken}` } });
+        if (!bres.ok) throw new Error(`AEM fetch ${bres.status}`);
+        const blob = await bres.blob();
+        if (!ctx || !ctx.org || !ctx.repo || !ctx.path) throw new Error('no doc context');
+        const parent = ctx.path.replace(/\/[^/]*$/, '');
+        const docname = ctx.path.split('/').pop();
+        const ext = extFor(blob.type, a['repo:name'] || a.name);
+        const file = `${slugName(a['repo:name'] || a.name)}.${ext}`;
+        const srcPath = `/${ctx.org}/${ctx.repo}${parent}/.${docname}/${file}`;
+        const fd = new FormData();
+        fd.append('data', new Blob([blob], { type: blob.type || `image/${ext}` }));
+        const ures = await fetch(`https://admin.da.live/source${srcPath}`, {
+          method: 'POST', headers: { Authorization: `Bearer ${imsToken}` }, body: fd,
+        });
+        if (!ures.ok) throw new Error(`da upload ${ures.status}`);
+        let json = {};
+        try { json = await ures.json(); } catch { /* some backends return empty */ }
+        const contentUrl = (json.source && json.source.contentUrl) || json.contentUrl || '';
+        if (contentUrl) { dbg(`uploaded → ${contentUrl}`); return contentUrl; }
+        // Fallback: published media path derived from the upload path.
+        return `https://main--${ctx.repo}--${ctx.org}.aem.page${parent}/${file}`;
+      }
+
+      async function handleSelection(assets) {
+        const list = Array.isArray(assets) ? assets : [assets];
+        const parts = [];
+        for (const a of list) {
+          if (!isImage(a)) { dbg(`skip non-image: ${a.name || ''}`); continue; }
+          try {
+            const src = await importAsset(a);
+            if (src) parts.push(`<p><img src="${esc(src)}" alt="${esc(altOf(a))}"></p>`);
+          } catch (err) { dbg(`import failed: ${err.message}`); }
+        }
+        const html = parts.join('');
+        if (html && window.opener) window.opener.postMessage({ pickedHtml: html }, '*');
+        window.close();
+      }
 
       function render(token) {
+        imsToken = token;
         const claims = decodeJwt(token);
         const props = {
           imsToken: token,
@@ -104,23 +155,22 @@
           imsScope: claims.scope,
           aemTierType: ['delivery', 'author'],
           colorScheme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-          handleSelection: (assets) => {
-            const html = assetsToHtml(assets);
-            if (html && window.opener) window.opener.postMessage({ pickedHtml: html }, '*');
-            window.close();
-          },
+          handleSelection,
           onClose: () => window.close(),
         };
         if (claims.org) props.imsOrg = claims.org;
-        dbg(`popup render: clientId=${props.imsClientId}, org=${props.imsOrg || '(none)'}`);
+        dbg(`popup render: clientId=${props.imsClientId}, doc=${ctx ? `${ctx.org}/${ctx.repo}${ctx.path}` : '(no ctx)'}`);
         try { window.PureJSSelectors.renderAssetSelector($selector, props); }
         catch (e) { dbg(`render threw: ${e.message}`); }
       }
 
       window.addEventListener('message', (e) => {
-        if (e.data && e.data.token) render(e.data.token);
+        if (e.data && e.data.token) {
+          if (e.data.ctx) ctx = e.data.ctx;
+          render(e.data.token);
+        }
       });
-      // Ask the opener (the da.live panel iframe) for the token.
+      // Ask the opener (the da.live panel iframe) for the token + doc context.
       if (window.opener) window.opener.postMessage({ pickerReady: true }, '*');
       else dbg('no opener — open this from the da.live panel.');
 
@@ -131,13 +181,14 @@
     } else {
       let daPort = null;
       let daToken = null;
+      let daCtx = null;
       let popup = null;
 
       document.getElementById('root').innerHTML = `
         <div class="pad">
           <p class="lead">Browse AEM Assets and insert images into the document.</p>
           <button class="primary" id="browse" disabled>Browse AEM Assets…</button>
-          <p class="note">Opens in a larger window. The selected asset is inserted at your cursor.</p>
+          <p class="note">The selected image is copied into this document's media and inserted at your cursor.</p>
         </div>`;
       const $browse = document.getElementById('browse');
 
@@ -145,14 +196,16 @@
       window.addEventListener('message', (e) => {
         if (e.data && e.data.ready) {
           daToken = e.data.token || null;
+          daCtx = e.data.context || e.data.project || null;
           if (e.ports && e.ports[0]) daPort = e.ports[0];
-          dbg(`da.live: port=${!!daPort}, token=${daToken ? 'yes' : 'no'}`);
+          dbg(`da.live: port=${!!daPort}, token=${daToken ? 'yes' : 'no'}, doc=${daCtx ? `${daCtx.org}/${daCtx.repo || daCtx.site}${daCtx.path}` : '?'}`);
           $browse.disabled = !daToken;
           if (!daToken) $browse.textContent = 'No AEM session (sign in to da.live)';
         }
         // messages from the popup
         if (e.data && e.data.pickerReady && popup) {
-          popup.postMessage({ token: daToken }, '*');
+          const ctx = daCtx ? { org: daCtx.org, repo: daCtx.repo || daCtx.site, path: daCtx.path } : null;
+          popup.postMessage({ token: daToken, ctx }, '*');
         }
         if (e.data && e.data.pickedHtml && daPort) {
           daPort.postMessage({ action: 'sendHTML', details: e.data.pickedHtml });
