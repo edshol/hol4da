@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AEM Assets Picker</title>
+  <script src="https://experience.adobe.com/solutions/CQ-assets-selectors/static-assets/resources/assets-selectors.js"></script>
+  <style>
+    :root { --bg:#fff; --fg:#2c2c2c; --muted:#6e6e6e; --line:#e1e1e1; --accent:#1473e6; --accent-fg:#fff; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: var(--fg); background: var(--bg); font-size: 14px;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    /* Controller (small da.live panel) */
+    .pad { padding: 16px; }
+    .lead { line-height: 1.5; color: var(--muted); margin: 0 0 14px; }
+    button.primary {
+      font: inherit; cursor: pointer; width: 100%; padding: 10px 12px;
+      border-radius: 8px; border: 1px solid var(--accent);
+      background: var(--accent); color: var(--accent-fg); font-weight: 600;
+    }
+    button.primary:disabled { opacity: .5; cursor: default; }
+    .note { font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+    /* Popup (full window) */
+    #selector { flex: 1; min-height: 0; }
+    #dbg {
+      font: 11px ui-monospace, Menlo, monospace; color: var(--muted);
+      border-top: 1px solid var(--line); padding: 5px 10px; white-space: pre-wrap;
+      max-height: 90px; overflow: auto; background: rgba(127,127,127,.06);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#1f1f1f; --fg:#e8e8e8; --muted:#9a9a9a; --line:#3a3a3a; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <div id="dbg"></div>
+
+  <script type="module">
+    const $dbg = document.getElementById('dbg');
+    const dbg = (m) => { $dbg.innerHTML += `${m}\n`; };
+    window.addEventListener('error', (e) => dbg(`err: ${e.message}`));
+    window.addEventListener('unhandledrejection', (e) => dbg(`rej: ${e.reason?.message || e.reason}`));
+
+    const isPopup = new URLSearchParams(location.search).get('mode') === 'popup';
+
+    // ---- shared helpers --------------------------------------------------
+    function decodeJwt(t) {
+      try {
+        const p = t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+        return JSON.parse(decodeURIComponent(escape(atob(p))));
+      } catch { return {}; }
+    }
+    const BASE = '/adobe/assets';
+    const RENDITION_REL = 'http://ns.adobe.com/adobecloud/rel/rendition';
+    const seo = (n) => (n && n.includes('.') ? n.split('.').slice(0, -1).join('.') : (n || ''));
+    const isImage = (a) => (a.mimetype || a['dc:format'] || '').toLowerCase().startsWith('image/');
+    const esc = (s = '') => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    function resolveAssetUrl(a) {
+      const host = a['repo:repositoryId'];
+      const assetId = a['repo:assetId'] || a['repo:id'];
+      const name = a['repo:name'] || a.name || '';
+      if (host && assetId) {
+        if (isImage(a)) return `https://${host}${BASE}/${assetId}/as/${seo(name)}.avif`;
+        return `https://${host}${BASE}/${assetId}/original/as/${name}`;
+      }
+      const rend = a._links && a._links[RENDITION_REL];
+      if (Array.isArray(rend) && rend[0] && rend[0].href) return rend[0].href;
+      if (a.path && host) return `https://${host.replace('author', 'publish')}${a.path}`;
+      return '';
+    }
+    function altOf(a) {
+      const meta = a._embedded && a._embedded['http://ns.adobe.com/adobecloud/rel/metadata/asset'];
+      return (meta && (meta['Iptc4xmpExt:ExtDescrAccessibility'] || meta['dc:description'] || meta['dc:title']))
+        || (a['dc:title'] && (a['dc:title']['o:default'] || a['dc:title']))
+        || a.name || '';
+    }
+    function assetsToHtml(assets) {
+      return (Array.isArray(assets) ? assets : [assets])
+        .map((a) => ({ src: resolveAssetUrl(a), alt: altOf(a) }))
+        .filter((x) => x.src)
+        .map((x) => `<p><img src="${esc(x.src)}" alt="${esc(x.alt)}"></p>`)
+        .join('');
+    }
+
+    // =====================================================================
+    // POPUP MODE: full-size window that renders the Assets Selector.
+    // Receives the token from its opener, posts the picked HTML back.
+    // =====================================================================
+    if (isPopup) {
+      document.getElementById('root').innerHTML = '<div id="selector" style="height:100vh"></div>';
+      const $selector = document.getElementById('selector');
+
+      function render(token) {
+        const claims = decodeJwt(token);
+        const props = {
+          imsToken: token,
+          imsClientId: claims.client_id,
+          imsScope: claims.scope,
+          aemTierType: ['delivery', 'author'],
+          colorScheme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+          handleSelection: (assets) => {
+            const html = assetsToHtml(assets);
+            if (html && window.opener) window.opener.postMessage({ pickedHtml: html }, '*');
+            window.close();
+          },
+          onClose: () => window.close(),
+        };
+        if (claims.org) props.imsOrg = claims.org;
+        dbg(`popup render: clientId=${props.imsClientId}, org=${props.imsOrg || '(none)'}`);
+        try { window.PureJSSelectors.renderAssetSelector($selector, props); }
+        catch (e) { dbg(`render threw: ${e.message}`); }
+      }
+
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.token) render(e.data.token);
+      });
+      // Ask the opener (the da.live panel iframe) for the token.
+      if (window.opener) window.opener.postMessage({ pickerReady: true }, '*');
+      else dbg('no opener — open this from the da.live panel.');
+
+    // =====================================================================
+    // CONTROLLER MODE: small da.live panel. Handshake with da.live, show a
+    // button that opens the big popup, relay the picked asset into the doc.
+    // =====================================================================
+    } else {
+      let daPort = null;
+      let daToken = null;
+      let popup = null;
+
+      document.getElementById('root').innerHTML = `
+        <div class="pad">
+          <p class="lead">Browse AEM Assets and insert images into the document.</p>
+          <button class="primary" id="browse" disabled>Browse AEM Assets…</button>
+          <p class="note">Opens in a larger window. The selected asset is inserted at your cursor.</p>
+        </div>`;
+      const $browse = document.getElementById('browse');
+
+      // da.live handshake
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.ready) {
+          daToken = e.data.token || null;
+          if (e.ports && e.ports[0]) daPort = e.ports[0];
+          dbg(`da.live: port=${!!daPort}, token=${daToken ? 'yes' : 'no'}`);
+          $browse.disabled = !daToken;
+          if (!daToken) $browse.textContent = 'No AEM session (sign in to da.live)';
+        }
+        // messages from the popup
+        if (e.data && e.data.pickerReady && popup) {
+          popup.postMessage({ token: daToken }, '*');
+        }
+        if (e.data && e.data.pickedHtml && daPort) {
+          daPort.postMessage({ action: 'sendHTML', details: e.data.pickedHtml });
+          dbg('inserted selection into doc');
+        }
+      });
+
+      $browse.addEventListener('click', () => {
+        if (!daToken) return;
+        const url = `${location.pathname}?mode=popup`;
+        popup = window.open(url, 'aem-asset-picker', 'width=1200,height=820,resizable=yes,scrollbars=yes');
+        if (!popup) dbg('popup blocked — allow popups for da.live');
+      });
+    }
+  </script>
+</body>
+</html>
