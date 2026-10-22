@@ -1,0 +1,96 @@
+.hero-video.block {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-height: clamp(420px, 70vh, 720px);
+  padding: 48px;
+  overflow: hidden;
+  color: #fff;
+  background: #000;
+  isolation: isolate;
+}
+
+/* background media */
+.hero-video .hero-video-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.hero-video .hero-video-bg video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* YouTube background: scale the 16:9 iframe to cover the hero */
+.hero-video .hero-video-bg iframe {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100vw;
+  height: 56.25vw; /* 16:9 */
+  min-width: 177.78vh; /* cover tall viewports */
+  min-height: 100%;
+  transform: translate(-50%, -50%);
+  border: 0;
+  pointer-events: none;
+}
+
+/* legibility overlay */
+.hero-video.block::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    to top,
+    rgb(0 0 0 / 70%) 0%,
+    rgb(0 0 0 / 20%) 45%,
+    rgb(0 0 0 / 35%) 100%
+  );
+}
+
+/* overlaid teaser */
+.hero-video .hero-video-content {
+  position: relative;
+  z-index: 2;
+  max-width: 640px;
+  text-shadow: 0 1px 12px rgb(0 0 0 / 45%);
+}
+
+.hero-video .hero-video-eyebrow {
+  margin: 0 0 0.5em;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 85%);
+}
+
+.hero-video .hero-video-content h1,
+.hero-video .hero-video-content h2,
+.hero-video .hero-video-content h3,
+.hero-video .hero-video-content h4 {
+  margin: 0 0 0.3em;
+  line-height: 1.1;
+  color: #fff;
+}
+
+.hero-video .hero-video-description {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.5;
+  color: rgb(255 255 255 / 92%);
+}
+
+@media (width <= 600px) {
+  .hero-video.block {
+    padding: 24px;
+    min-height: clamp(360px, 80vh, 560px);
+  }
+
+  .hero-video .hero-video-description {
+    font-size: 1rem;
+  }
+}

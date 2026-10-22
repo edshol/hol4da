@@ -42,7 +42,7 @@ function parseYouTubeId(url) {
  * @returns {{kind:'youtube',id}|{kind:'file',src}|{kind:'probe',src}|null}
  *   null = definitely not something we render. 'probe' = needs a HEAD check.
  */
-function classifySource(url) {
+export function classifySource(url) {
   if (!url) return null;
   const id = parseYouTubeId(url);
   if (id) return { kind: 'youtube', id };
@@ -59,7 +59,7 @@ function classifySource(url) {
 }
 
 /** HEAD the URL and report whether it is a playable video. */
-async function isVideoUrl(src) {
+export async function isVideoUrl(src) {
   try {
     const resp = await fetch(src, { method: 'HEAD' });
     const ct = (resp.headers.get('content-type') || '').toLowerCase();
