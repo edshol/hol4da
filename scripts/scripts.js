@@ -117,6 +117,17 @@ async function loadLazy(doc) {
   const main = doc.querySelector('main');
   await loadSections(main);
 
+  // Turn stray YouTube links (e.g. inside a columns cell) into video players.
+  if (main.querySelector('a[href*="youtu"]')) {
+    try {
+      const { autoVideo } = await import(`${window.hlx.codeBasePath}/blocks/video/video.js`);
+      autoVideo(main);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('autoVideo failed', e);
+    }
+  }
+
   const { hash } = window.location;
   const element = hash ? doc.getElementById(hash.substring(1)) : false;
   if (hash && element) element.scrollIntoView();
