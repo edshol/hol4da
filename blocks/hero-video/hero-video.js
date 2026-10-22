@@ -87,6 +87,15 @@ export default async function decorate(block) {
     }
   });
 
+  // Rescue markdown-style links "[text](url)" that da.live left as plain text.
+  [...block.querySelectorAll('p')].forEach((p) => {
+    if (!/\[[^\]]+\]\([^)]+\)/.test(p.textContent)) return;
+    p.innerHTML = p.innerHTML.replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      (_, text, href) => `<a href="${href.trim()}">${text}</a>`,
+    );
+  });
+
   // Remaining content becomes the teaser overlay.
   const title = block.querySelector('h1, h2, h3, h4, h5, h6');
   const allParas = [...block.querySelectorAll('p')].filter((p) => p.textContent.trim());
