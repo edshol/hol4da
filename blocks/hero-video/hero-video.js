@@ -76,15 +76,19 @@ async function buildBackground(url) {
 export default async function decorate(block) {
   const url = extractVideoUrl(block);
 
-  // Remaining text becomes the teaser overlay.
+  // Remaining content becomes the teaser overlay.
   const title = block.querySelector('h1, h2, h3, h4, h5, h6');
-  const paras = [...block.querySelectorAll('p')].filter((p) => p.textContent.trim());
+  const allParas = [...block.querySelectorAll('p')].filter((p) => p.textContent.trim());
+  // CTA paragraphs contain a link (decorateButtons already ran on the block).
+  const actions = allParas.filter((p) => p.querySelector('a'));
+  const textParas = allParas.filter((p) => !p.querySelector('a'));
+
   let eyebrow = null;
-  let description = paras;
+  let description = textParas;
   if (title) {
-    eyebrow = paras.find((p) => title.compareDocumentPosition(p)
+    eyebrow = textParas.find((p) => title.compareDocumentPosition(p)
       & Node.DOCUMENT_POSITION_PRECEDING) || null;
-    description = paras.filter((p) => title.compareDocumentPosition(p)
+    description = textParas.filter((p) => title.compareDocumentPosition(p)
       & Node.DOCUMENT_POSITION_FOLLOWING);
   }
 
@@ -93,6 +97,16 @@ export default async function decorate(block) {
   if (eyebrow) { eyebrow.className = 'hero-video-eyebrow'; content.append(eyebrow); }
   if (title) content.append(title);
   description.forEach((p) => { p.className = 'hero-video-description'; content.append(p); });
+  if (actions.length) {
+    const cta = document.createElement('div');
+    cta.className = 'hero-video-actions';
+    actions.forEach((p) => {
+      p.classList.add('button-container');
+      p.querySelectorAll('a').forEach((a) => a.classList.add('button'));
+      cta.append(p);
+    });
+    content.append(cta);
+  }
 
   const bg = document.createElement('div');
   bg.className = 'hero-video-bg';

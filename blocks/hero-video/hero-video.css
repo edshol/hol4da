@@ -1,16 +1,32 @@
 .hero-video.block {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: center;
   min-height: clamp(420px, 70vh, 720px);
   padding: 48px;
   overflow: hidden;
   color: #fff;
+  text-align: center;
   background: #000;
   isolation: isolate;
 }
 
-/* background media */
+/* ---- width variants -------------------------------------------------- */
+/* default: constrained to the content/section width.
+   (full-width): break out edge-to-edge. */
+.hero-video.full-width {
+  width: 100vw;
+  max-width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+}
+
+/* ---- height variants ------------------------------------------------- */
+.hero-video.short { min-height: clamp(300px, 45vh, 460px); }
+.hero-video.tall { min-height: clamp(560px, 88vh, 900px); }
+
+/* ---- background media ------------------------------------------------ */
 .hero-video .hero-video-bg {
   position: absolute;
   inset: 0;
@@ -22,6 +38,9 @@
   height: 100%;
   object-fit: cover;
 }
+
+/* (contain): show the whole frame instead of cropping to fill */
+.hero-video.contain .hero-video-bg video { object-fit: contain; }
 
 /* YouTube background: scale the 16:9 iframe to cover the hero */
 .hero-video .hero-video-bg iframe {
@@ -37,7 +56,7 @@
   pointer-events: none;
 }
 
-/* legibility overlay */
+/* ---- legibility overlay ---------------------------------------------- */
 .hero-video.block::after {
   content: "";
   position: absolute;
@@ -45,27 +64,28 @@
   z-index: 1;
   background: linear-gradient(
     to top,
-    rgb(0 0 0 / 70%) 0%,
-    rgb(0 0 0 / 20%) 45%,
-    rgb(0 0 0 / 35%) 100%
+    rgb(0 0 0 / 60%) 0%,
+    rgb(0 0 0 / 25%) 50%,
+    rgb(0 0 0 / 45%) 100%
   );
 }
 
-/* overlaid teaser */
+/* ---- overlaid teaser ------------------------------------------------- */
 .hero-video .hero-video-content {
   position: relative;
   z-index: 2;
-  max-width: 640px;
-  text-shadow: 0 1px 12px rgb(0 0 0 / 45%);
+  max-width: 760px;
+  margin: 0 auto;
+  text-shadow: 0 1px 14px rgb(0 0 0 / 45%);
 }
 
 .hero-video .hero-video-eyebrow {
-  margin: 0 0 0.5em;
-  font-size: 0.85rem;
+  margin: 0 0 0.6em;
+  font-size: 0.9rem;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgb(255 255 255 / 85%);
+  color: rgb(255 255 255 / 88%);
 }
 
 .hero-video .hero-video-content h1,
@@ -73,24 +93,65 @@
 .hero-video .hero-video-content h3,
 .hero-video .hero-video-content h4 {
   margin: 0 0 0.3em;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 700;
   line-height: 1.1;
   color: #fff;
 }
 
 .hero-video .hero-video-description {
-  margin: 0;
-  font-size: 1.125rem;
+  margin: 0 auto;
+  max-width: 48ch;
+  font-size: clamp(1rem, 2vw, 1.25rem);
   line-height: 1.5;
   color: rgb(255 255 255 / 92%);
 }
 
+/* ---- CTA buttons ----------------------------------------------------- */
+.hero-video .hero-video-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1.75em;
+}
+
+.hero-video .hero-video-actions p { margin: 0; }
+
+.hero-video .hero-video-actions a,
+.hero-video .hero-video-actions a.button {
+  display: inline-block;
+  padding: 0.7em 1.6em;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  font-weight: 700;
+  text-decoration: none;
+  text-shadow: none;
+  color: #fff;
+  background: rgb(200 16 46); /* MH red — primary */
+  border-color: rgb(200 16 46);
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.hero-video .hero-video-actions a:hover {
+  transform: translateY(-1px);
+  background: rgb(168 10 36);
+  border-color: rgb(168 10 36);
+}
+
+/* second button renders as an outline/secondary */
+.hero-video .hero-video-actions p:nth-of-type(n + 2) a {
+  background: transparent;
+  border-color: #fff;
+}
+
+.hero-video .hero-video-actions p:nth-of-type(n + 2) a:hover {
+  background: rgb(255 255 255 / 15%);
+}
+
 @media (width <= 600px) {
   .hero-video.block {
-    padding: 24px;
+    padding: 28px 20px;
     min-height: clamp(360px, 80vh, 560px);
-  }
-
-  .hero-video .hero-video-description {
-    font-size: 1rem;
   }
 }
