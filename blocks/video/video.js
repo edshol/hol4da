@@ -1,15 +1,25 @@
 /*
  * Video Block
- * Inline YouTube player with a lightweight poster facade.
+ * Inline player with a lightweight poster facade. Supports:
+ *  - YouTube / youtu.be  -> privacy-friendly iframe
+ *  - Direct video files  -> native <video> (mp4/webm/mov/… or Scene7 streams)
  * Autoplays muted when scrolled into view (IntersectionObserver), pauses when
- * scrolled out. Click the poster or the unmute button to enable sound.
+ * scrolled out. Click the poster (YouTube) or use the controls to unmute.
  * Respects prefers-reduced-motion (no autoplay; plays on click).
+ *
+ * Source type detection (see classifySource):
+ *  1. host  -> youtube
+ *  2. file extension (.mp4/.webm/.m4v/.mov/.ogv) -> file
+ *  3. ambiguous (Scene7 /is/content/, no extension) -> HEAD request,
+ *     branch on Content-Type (video/*  or  application/x-mpegURL).
  *
  * Exports:
  *  - default decorate(block): the named "Video" block.
- *  - autoVideo(main): converts stray YouTube links (e.g. inside a columns
- *    block) into the same player. Called from scripts.js after sections load.
+ *  - autoVideo(main): converts stray video links (e.g. inside a columns cell)
+ *    into the same player. Called from scripts.js after sections load.
  */
+
+const VIDEO_EXT = /\.(mp4|webm|ogv|ogg|m4v|mov)(\?|#|$)/i;
 
 function parseYouTubeId(url) {
   if (!url) return null;
@@ -25,6 +35,38 @@ function parseYouTubeId(url) {
   } catch (e) { /* not a full URL — fall through */ }
   const bare = url.trim().match(/^[\w-]{11}$/);
   return bare ? bare[0] : null;
+}
+
+/**
+ * Classify a URL into a renderable video source.
+ * @returns {{kind:'youtube',id}|{kind:'file',src}|{kind:'probe',src}|null}
+ *   null = definitely not something we render. 'probe' = needs a HEAD check.
+ */
+function classifySource(url) {
+  if (!url) return null;
+  const id = parseYouTubeId(url);
+  if (id) return { kind: 'youtube', id };
+  let u;
+  try { u = new URL(url, window.location.href); } catch (e) { return null; }
+  if (VIDEO_EXT.test(u.pathname) || VIDEO_EXT.test(u.search)) {
+    return { kind: 'file', src: u.href };
+  }
+  // Extension-less Scene7 / DM content endpoints: could be video, image or PDF.
+  if (u.hostname.endsWith('scene7.com') || /\/is\/content\//.test(u.pathname)) {
+    return { kind: 'probe', src: u.href };
+  }
+  return null;
+}
+
+/** HEAD the URL and report whether it is a playable video. */
+async function isVideoUrl(src) {
+  try {
+    const resp = await fetch(src, { method: 'HEAD' });
+    const ct = (resp.headers.get('content-type') || '').toLowerCase();
+    return ct.startsWith('video/') || ct.includes('mpegurl');
+  } catch (e) {
+    return false;
+  }
 }
 
 /* Ensure video.css is present even when the player is built by autoVideo
@@ -65,15 +107,11 @@ function buildIframe(id, mute) {
   return iframe;
 }
 
-/**
- * Renders the poster facade + scroll-triggered player into `container`.
- * `container` must carry the `video block` classes (styling hook).
- */
-function renderVideo(container, id, posterPicture, posterImg) {
+/** YouTube: poster facade + lazy iframe, muted autoplay on scroll. */
+function renderYouTube(container, id, posterPicture, posterImg) {
   ensureCss();
   container.textContent = '';
 
-  // --- Poster facade (a real button for keyboard + a11y) ---
   const facade = document.createElement('button');
   facade.type = 'button';
   facade.className = 'video-facade';
@@ -94,7 +132,6 @@ function renderVideo(container, id, posterPicture, posterImg) {
   facade.append(play);
   container.append(facade);
 
-  // --- Unmute affordance (shown during muted autoplay) ---
   const unmute = document.createElement('button');
   unmute.type = 'button';
   unmute.className = 'video-unmute';
@@ -115,10 +152,8 @@ function renderVideo(container, id, posterPicture, posterImg) {
     unmute.remove();
   });
 
-  // Manual click → play with sound.
   facade.addEventListener('click', () => load(false));
 
-  // Autoplay (muted) when scrolled into view.
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!reduce && 'IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries) => {
@@ -135,38 +170,91 @@ function renderVideo(container, id, posterPicture, posterImg) {
   }
 }
 
+/** Direct video file (mp4/webm/Scene7…): native <video>, muted autoplay on scroll. */
+function renderFile(container, src, posterUrl) {
+  ensureCss();
+  container.textContent = '';
+
+  const video = document.createElement('video');
+  video.src = src;
+  video.controls = true;
+  video.playsInline = true;
+  video.muted = true;
+  video.setAttribute('muted', ''); // iOS needs the attribute too
+  video.preload = 'metadata';
+  if (posterUrl) video.poster = posterUrl;
+  container.append(video);
+  container.classList.add('video-loaded');
+
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduce && 'IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          const p = video.play();
+          if (p?.catch) p.catch(() => { /* autoplay blocked — leave controls */ });
+        } else {
+          video.pause();
+        }
+      });
+    }, { threshold: 0.5 });
+    io.observe(container);
+  }
+}
+
+function showError(container) {
+  container.textContent = '';
+  container.innerHTML = '<p class="video-error">再生できる動画が見つかりません。</p>';
+}
+
+/** Render whatever `url` resolves to into `container` (a .video.block element). */
+async function renderInto(container, url, posterPicture, posterImg) {
+  const src = classifySource(url);
+  const posterUrl = posterImg?.src || posterPicture?.querySelector('img')?.src || null;
+  if (!src) { showError(container); return; }
+  if (src.kind === 'youtube') {
+    renderYouTube(container, src.id, posterPicture, posterImg);
+  } else if (src.kind === 'file') {
+    renderFile(container, src.src, posterUrl);
+  } else if (src.kind === 'probe') {
+    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl);
+    else showError(container);
+  }
+}
+
 export default function decorate(block) {
   const link = block.querySelector('a[href]');
   const textUrl = link ? null : (block.textContent.match(/https?:\/\/\S+|[\w-]{11}/) || [])[0];
-  const id = parseYouTubeId(link ? link.getAttribute('href') : textUrl);
+  const url = link ? link.getAttribute('href') : textUrl;
   const posterPicture = block.querySelector('picture');
   const posterImg = posterPicture ? null : block.querySelector('img');
-
-  if (!id) {
-    block.textContent = '';
-    block.innerHTML = '<p class="video-error">有効な YouTube URL が見つかりません。</p>';
-    return;
-  }
-
-  renderVideo(block, id, posterPicture, posterImg);
+  renderInto(block, url, posterPicture, posterImg);
 }
 
 /**
- * Converts stray YouTube links anywhere in `main` into the player.
+ * Converts stray video links anywhere in `main` into the player.
  * Skips links already inside a .video.block (handled by the named block)
  * and links in site chrome (header/footer/nav). This is what makes a
- * YouTube URL work inside a columns cell.
+ * YouTube / Scene7 / mp4 URL work inside a columns cell.
  */
 export function autoVideo(main) {
   main.querySelectorAll('a[href]').forEach((a) => {
     if (a.closest('.video.block') || a.closest('header, footer, nav')) return;
-    const id = parseYouTubeId(a.getAttribute('href'));
-    if (!id) return;
-    const wrapper = document.createElement('div');
-    wrapper.className = 'video block';
-    // Replace the link (or its wrapping paragraph) with the player.
-    const host = a.closest('p') || a;
-    host.replaceWith(wrapper);
-    renderVideo(wrapper, id, null, null);
+    const href = a.getAttribute('href');
+    const src = classifySource(href);
+    if (!src) return;
+    const convert = () => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'video block';
+      const host = a.closest('p') || a;
+      host.replaceWith(wrapper);
+      renderInto(wrapper, href);
+    };
+    if (src.kind === 'probe') {
+      // confirm it is really a video before replacing the author's link
+      isVideoUrl(src.src).then((ok) => { if (ok) convert(); });
+    } else {
+      convert();
+    }
   });
 }
