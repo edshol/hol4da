@@ -76,6 +76,17 @@ async function buildBackground(url) {
 export default async function decorate(block) {
   const url = extractVideoUrl(block);
 
+  // Rescue markdown-style "## Title" that da.live left as plain text:
+  // promote any paragraph starting with #..###### into a real heading.
+  [...block.querySelectorAll('p')].forEach((p) => {
+    const m = p.textContent.match(/^(#{1,6})\s+(.+)/s);
+    if (m) {
+      const h = document.createElement(`h${m[1].length}`);
+      h.textContent = m[2].trim();
+      p.replaceWith(h);
+    }
+  });
+
   // Remaining content becomes the teaser overlay.
   const title = block.querySelector('h1, h2, h3, h4, h5, h6');
   const allParas = [...block.querySelectorAll('p')].filter((p) => p.textContent.trim());
