@@ -48,24 +48,81 @@ function parseYouTubeId(url) {
 }
 
 /**
+ * Resolve an HLS manifest URL from a URL, or null if it is not HLS/next-gen DM.
+ * Handles:
+ *  - a direct .m3u8 manifest
+ *  - "Dynamic Media with OpenAPI" delivery URLs on *.adobeaemcloud.com, i.e.
+ *    /adobe/assets/<urn>/play (the HTML player), /manifest.mpd, etc. — all map
+ *    to the public HLS manifest /adobe/assets/<urn>/manifest.m3u8. Any token /
+ *    expiryTime query (protected assets) is carried over.
+ */
+export function hlsManifest(url) {
+  let u;
+  try { u = new URL(url, window.location.href); } catch (e) { return null; }
+  if (/\.m3u8(\?|#|$)/i.test(u.pathname)) return u.href;
+  if (/\.adobeaemcloud\.com$/.test(u.hostname) && /\/adobe\/assets\//.test(u.pathname)) {
+    const base = u.pathname.replace(/\/(play|manifest\.(m3u8|mpd)|manifestaudio\.m3u8)$/i, '');
+    return `${u.origin}${base}/manifest.m3u8${u.search || ''}`;
+  }
+  return null;
+}
+
+/**
  * Classify a URL into a renderable video source.
- * @returns {{kind:'youtube',id}|{kind:'file',src}|{kind:'probe',src}|null}
+ * @returns {{kind:'youtube',id}|{kind:'file',src}|{kind:'hls',src}|{kind:'probe',src}|null}
  *   null = definitely not something we render. 'probe' = needs a HEAD check.
  */
 export function classifySource(url) {
   if (!url) return null;
   const id = parseYouTubeId(url);
   if (id) return { kind: 'youtube', id };
+  const hls = hlsManifest(url);
+  if (hls) return { kind: 'hls', src: hls };
   let u;
   try { u = new URL(url, window.location.href); } catch (e) { return null; }
   if (VIDEO_EXT.test(u.pathname) || VIDEO_EXT.test(u.search)) {
     return { kind: 'file', src: u.href };
   }
-  // Extension-less Scene7 / DM content endpoints: could be video, image or PDF.
+  // Extension-less Scene7 / classic DM content endpoints: video, image or PDF.
   if (u.hostname.endsWith('scene7.com') || /\/is\/content\//.test(u.pathname)) {
     return { kind: 'probe', src: u.href };
   }
   return null;
+}
+
+/* Lazily load hls.js once (only when a non-Safari browser must play HLS). */
+let hlsPromise = null;
+function loadHls() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (!hlsPromise) {
+    hlsPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';
+      s.async = true;
+      s.onload = () => resolve(window.Hls);
+      s.onerror = reject;
+      document.head.append(s);
+    });
+  }
+  return hlsPromise;
+}
+
+/* Point a <video> at `src`. For HLS, Safari plays the manifest natively; other
+   browsers get hls.js attached. Direct files are set straight on video.src. */
+export function attachSource(video, src, isHls) {
+  if (isHls && !video.canPlayType('application/vnd.apple.mpegurl')) {
+    loadHls().then((Hls) => {
+      if (Hls && Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: true });
+        hls.loadSource(src);
+        hls.attachMedia(video);
+      } else {
+        video.src = src;
+      }
+    }).catch(() => { video.src = src; });
+  } else {
+    video.src = src;
+  }
 }
 
 /** HEAD the URL and report whether it is a playable video. */
@@ -190,15 +247,15 @@ function renderYouTube(container, id, posterPicture, posterImg, autoplay) {
   io.observe(container);
 }
 
-/** Direct file / Dynamic Media: click-to-play facade by default (the <video>
-    and its stream are created only on click), muted autoplay for the variant. */
-function renderFile(container, src, posterUrl, autoplay) {
+/** Direct file / Dynamic Media (incl. HLS): click-to-play facade by default
+    (the <video> and its stream are created only on click), muted autoplay for
+    the variant. `isHls` routes playback through hls.js where needed. */
+function renderFile(container, src, posterUrl, autoplay, isHls) {
   ensureCss();
   container.textContent = '';
 
   const mkVideo = (muted) => {
     const video = document.createElement('video');
-    video.src = src;
     video.controls = true;
     video.playsInline = true;
     // Muted autoplay = ambient/background use, so loop it. A click-to-play
@@ -221,6 +278,7 @@ function renderFile(container, src, posterUrl, autoplay) {
       const video = mkVideo(false);
       container.append(video);
       container.classList.add('video-loaded');
+      attachSource(video, src, isHls);
       const p = video.play();
       if (p?.catch) p.catch(() => { /* leave the native controls */ });
     }, { once: true });
@@ -230,6 +288,7 @@ function renderFile(container, src, posterUrl, autoplay) {
   const video = mkVideo(true);
   container.append(video);
   container.classList.add('video-loaded');
+  attachSource(video, src, isHls);
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduce || !('IntersectionObserver' in window)) return;
   const io = new IntersectionObserver((entries) => {
@@ -281,7 +340,11 @@ async function renderInto(container, url, posterPicture, posterImg, autoplay, fo
   if (forced === 'youtube') {
     src = { kind: 'youtube', id: parseYouTubeId(url) };
   } else if (forced === 'file') {
-    try { src = { kind: 'file', src: new URL(url, window.location.href).href }; } catch (e) { src = null; }
+    // A source-type variant (mp4 / dm / scene7 ...) still resolves next-gen DM
+    // and .m3u8 to HLS; everything else is a direct file. No HEAD probe.
+    const hls = hlsManifest(url);
+    if (hls) src = { kind: 'hls', src: hls };
+    else { try { src = { kind: 'file', src: new URL(url, window.location.href).href }; } catch (e) { src = null; } }
   } else {
     src = classifySource(url);
   }
@@ -290,9 +353,11 @@ async function renderInto(container, url, posterPicture, posterImg, autoplay, fo
   if (src.kind === 'youtube') {
     renderYouTube(container, src.id, posterPicture, posterImg, autoplay);
   } else if (src.kind === 'file') {
-    renderFile(container, src.src, posterUrl, autoplay || autoplayFiles);
+    renderFile(container, src.src, posterUrl, autoplay || autoplayFiles, false);
+  } else if (src.kind === 'hls') {
+    renderFile(container, src.src, posterUrl, autoplay || autoplayFiles, true);
   } else if (src.kind === 'probe') {
-    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl, autoplay || autoplayFiles);
+    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl, autoplay || autoplayFiles, false);
     else showError(container);
   }
 }

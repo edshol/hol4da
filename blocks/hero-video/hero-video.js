@@ -13,7 +13,7 @@
  *   | A short supporting description.     |  <- description (optional)
  */
 
-import { classifySource, isVideoUrl } from '../video/video.js';
+import { classifySource, isVideoUrl, attachSource } from '../video/video.js';
 
 /** Pull the first video URL out of the block and remove its element. */
 function extractVideoUrl(block) {
@@ -60,16 +60,16 @@ async function buildBackground(url) {
     return { el: iframe, type: 'youtube' };
   }
 
-  // direct file or Scene7 (confirm via HEAD for the ambiguous case)
+  // direct file, HLS (incl. next-gen DM), or Scene7 (HEAD-probe the ambiguous)
   if (src.kind === 'probe' && !(await isVideoUrl(src.src))) return null;
   const video = document.createElement('video');
-  video.src = src.src;
   video.muted = true;
   video.loop = true;
   video.playsInline = true;
   video.setAttribute('muted', '');
   video.setAttribute('playsinline', '');
   video.preload = 'auto';
+  attachSource(video, src.src, src.kind === 'hls');
   return { el: video, type: 'file' };
 }
 
