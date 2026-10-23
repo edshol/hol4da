@@ -136,25 +136,37 @@ export default async function decorate(block) {
   block.append(bg, content);
 
   if (!url) return;
-  const media = await buildBackground(url);
-  if (!media) return;
-  bg.append(media.el);
 
-  // Play only while on screen (perf), and honour reduced-motion.
+  // Honour reduced-motion: no autoplaying background at all.
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (media.type === 'file' && !reduce && 'IntersectionObserver' in window) {
+  if (reduce) return;
+
+  // Lazily build + play the background ONLY while the hero is on screen. This
+  // stops stacked heroes (and heavy YouTube embeds) from all loading at once —
+  // the cause of the page/canvas freezing — and keeps the work off the critical
+  // path on a normal single-hero page.
+  let media;
+  let building = false;
+  const start = async () => {
+    if (!media && !building) {
+      building = true;
+      media = await buildBackground(url);
+      building = false;
+      if (media) bg.append(media.el);
+    }
+    if (media?.type === 'file') {
+      const p = media.el.play();
+      if (p?.catch) p.catch(() => { /* autoplay blocked — leave it paused */ });
+    }
+  };
+  const stop = () => { if (media?.type === 'file') media.el.pause(); };
+
+  if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const p = media.el.play();
-          if (p?.catch) p.catch(() => { /* autoplay blocked */ });
-        } else {
-          media.el.pause();
-        }
-      });
-    }, { threshold: 0.1 });
+      entries.forEach((entry) => { if (entry.isIntersecting) start(); else stop(); });
+    }, { threshold: 0.1, rootMargin: '200px' });
     io.observe(block);
-  } else if (media.type === 'file' && !reduce) {
-    media.el.autoplay = true;
+  } else {
+    start();
   }
 }
