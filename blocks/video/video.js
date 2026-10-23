@@ -1,22 +1,26 @@
 /*
  * Video Block
- * Inline player with a lightweight poster facade. Supports:
- *  - YouTube / youtu.be  -> privacy-friendly iframe
- *  - Direct video files  -> native <video> (mp4/webm/mov/… or Scene7 streams)
- * Autoplays muted when scrolled into view (IntersectionObserver), pauses when
- * scrolled out. Click the poster (YouTube) or use the controls to unmute.
- * Respects prefers-reduced-motion (no autoplay; plays on click).
+ * Lightweight, performance-first inline player.
  *
- * Source type detection (see classifySource):
- *  1. host  -> youtube
- *  2. file extension (.mp4/.webm/.m4v/.mov/.ogv) -> file
- *  3. ambiguous (Scene7 /is/content/, no extension) -> HEAD request,
- *     branch on Content-Type (video/*  or  application/x-mpegURL).
+ * DEFAULT = click-to-play: only a poster facade renders on load; nothing is
+ * fetched (no YouTube iframe, no <video> stream) until the visitor clicks.
+ * This keeps the page fast and lets Lighthouse/PageSpeed score high, because
+ * the heavy player is never loaded during an automated run.
+ *
+ * VARIANT "autoplay" (block name "Video autoplay") = muted autoplay when the
+ * block scrolls into view (IntersectionObserver), paused when it leaves. Use
+ * only where the motion matters more than the performance budget.
+ *
+ * Supported sources (see classifySource):
+ *  - YouTube / youtu.be                      -> privacy-friendly iframe
+ *  - Direct files (.mp4/.webm/.m4v/.mov/.ogv) -> native <video>
+ *  - AEM Dynamic Media / Scene7 (/is/content/, no extension) -> HEAD probe,
+ *    then native <video> when Content-Type is video/* or application/x-mpegURL.
  *
  * Exports:
  *  - default decorate(block): the named "Video" block.
  *  - autoVideo(main): converts stray video links (e.g. inside a columns cell)
- *    into the same player. Called from scripts.js after sections load.
+ *    into the same click-to-play player. Called from scripts.js.
  */
 
 const VIDEO_EXT = /\.(mp4|webm|ogv|ogg|m4v|mov)(\?|#|$)/i;
@@ -107,36 +111,48 @@ function buildIframe(id, mute) {
   return iframe;
 }
 
-/** YouTube: poster facade + lazy iframe, muted autoplay on scroll. */
-function renderYouTube(container, id, posterPicture, posterImg) {
-  ensureCss();
-  container.textContent = '';
-
+/** The poster + play-button facade. Renders nothing heavy; just an image. */
+function buildFacade(posterPicture, posterImg, posterUrl, ytId) {
   const facade = document.createElement('button');
   facade.type = 'button';
   facade.className = 'video-facade';
   facade.setAttribute('aria-label', '動画を再生');
-
   if (posterPicture) {
     facade.append(posterPicture);
   } else {
     const img = posterImg || document.createElement('img');
-    img.src = `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`;
+    if (!img.getAttribute('src')) {
+      const src = posterUrl || (ytId ? `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg` : '');
+      if (src) img.src = src;
+    }
     img.alt = '';
     img.loading = 'lazy';
-    facade.append(img);
+    if (img.getAttribute('src')) facade.append(img);
   }
   const play = document.createElement('span');
   play.className = 'video-play';
   play.setAttribute('aria-hidden', 'true');
   facade.append(play);
-  container.append(facade);
+  return facade;
+}
 
+function buildUnmute() {
   const unmute = document.createElement('button');
   unmute.type = 'button';
   unmute.className = 'video-unmute';
   unmute.textContent = '🔇 音声をON';
+  return unmute;
+}
 
+/** YouTube: poster facade; the iframe loads on click (default) or, for the
+    "autoplay" variant, muted when scrolled into view. */
+function renderYouTube(container, id, posterPicture, posterImg, autoplay) {
+  ensureCss();
+  container.textContent = '';
+  const facade = buildFacade(posterPicture, posterImg, null, id);
+  container.append(facade);
+
+  const unmute = buildUnmute();
   let iframe = null;
   const load = (mute) => {
     if (iframe) return;
@@ -145,61 +161,75 @@ function renderYouTube(container, id, posterPicture, posterImg) {
     container.classList.add('video-loaded');
     if (mute) container.append(unmute);
   };
-
   unmute.addEventListener('click', () => {
     command(iframe, 'unMute');
     command(iframe, 'playVideo');
     unmute.remove();
   });
-
   facade.addEventListener('click', () => load(false));
 
+  if (!autoplay) return;
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!reduce && 'IntersectionObserver' in window) {
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          if (!iframe) load(true);
-          else command(iframe, 'playVideo');
-        } else if (iframe) {
-          command(iframe, 'pauseVideo');
-        }
-      });
-    }, { threshold: 0.5 });
-    io.observe(container);
-  }
+  if (reduce || !('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        if (!iframe) load(true);
+        else command(iframe, 'playVideo');
+      } else if (iframe) {
+        command(iframe, 'pauseVideo');
+      }
+    });
+  }, { threshold: 0.5 });
+  io.observe(container);
 }
 
-/** Direct video file (mp4/webm/Scene7…): native <video>, muted autoplay on scroll. */
-function renderFile(container, src, posterUrl) {
+/** Direct file / Dynamic Media: click-to-play facade by default (the <video>
+    and its stream are created only on click), muted autoplay for the variant. */
+function renderFile(container, src, posterUrl, autoplay) {
   ensureCss();
   container.textContent = '';
 
-  const video = document.createElement('video');
-  video.src = src;
-  video.controls = true;
-  video.playsInline = true;
-  video.muted = true;
-  video.setAttribute('muted', ''); // iOS needs the attribute too
-  video.preload = 'metadata';
-  if (posterUrl) video.poster = posterUrl;
+  const mkVideo = (muted) => {
+    const video = document.createElement('video');
+    video.src = src;
+    video.controls = true;
+    video.playsInline = true;
+    if (muted) { video.muted = true; video.setAttribute('muted', ''); }
+    video.preload = 'metadata';
+    if (posterUrl) video.poster = posterUrl;
+    return video;
+  };
+
+  if (!autoplay) {
+    const facade = buildFacade(null, null, posterUrl, null);
+    container.append(facade);
+    facade.addEventListener('click', () => {
+      const video = mkVideo(false);
+      container.append(video);
+      container.classList.add('video-loaded');
+      const p = video.play();
+      if (p?.catch) p.catch(() => { /* leave the native controls */ });
+    }, { once: true });
+    return;
+  }
+
+  const video = mkVideo(true);
   container.append(video);
   container.classList.add('video-loaded');
-
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!reduce && 'IntersectionObserver' in window) {
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const p = video.play();
-          if (p?.catch) p.catch(() => { /* autoplay blocked — leave controls */ });
-        } else {
-          video.pause();
-        }
-      });
-    }, { threshold: 0.5 });
-    io.observe(container);
-  }
+  if (reduce || !('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        const p = video.play();
+        if (p?.catch) p.catch(() => { /* autoplay blocked — leave controls */ });
+      } else {
+        video.pause();
+      }
+    });
+  }, { threshold: 0.5 });
+  io.observe(container);
 }
 
 function showError(container) {
@@ -207,35 +237,66 @@ function showError(container) {
   container.innerHTML = '<p class="video-error">再生できる動画が見つかりません。</p>';
 }
 
-/** Render whatever `url` resolves to into `container` (a .video.block element). */
-async function renderInto(container, url, posterPicture, posterImg) {
-  const src = classifySource(url);
+/* Source-type variants let the author declare the kind, so we skip runtime
+   detection (and the Dynamic Media HEAD probe) entirely — no wasted request.
+   e.g. block name "Video dm", "Video mp4 autoplay", "Video youtube". */
+const TYPE_VARIANTS = {
+  youtube: 'youtube',
+  yt: 'youtube',
+  mp4: 'file',
+  file: 'file',
+  webm: 'file',
+  dm: 'file',
+  dynamicmedia: 'file',
+  'dynamic-media': 'file',
+  scene7: 'file',
+};
+
+function forcedKind(block) {
+  const hit = [...block.classList].find((c) => TYPE_VARIANTS[c]);
+  return hit ? TYPE_VARIANTS[hit] : null;
+}
+
+/** Render whatever `url` resolves to into `container` (a .video.block element).
+    `forced` ('youtube' | 'file' | null) comes from a source-type variant and,
+    when set, bypasses classifySource so no HEAD probe is made. */
+async function renderInto(container, url, posterPicture, posterImg, autoplay, forced) {
+  let src;
+  if (forced === 'youtube') {
+    src = { kind: 'youtube', id: parseYouTubeId(url) };
+  } else if (forced === 'file') {
+    try { src = { kind: 'file', src: new URL(url, window.location.href).href }; } catch (e) { src = null; }
+  } else {
+    src = classifySource(url);
+  }
   const posterUrl = posterImg?.src || posterPicture?.querySelector('img')?.src || null;
-  if (!src) { showError(container); return; }
+  if (!src || (src.kind === 'youtube' && !src.id)) { showError(container); return; }
   if (src.kind === 'youtube') {
-    renderYouTube(container, src.id, posterPicture, posterImg);
+    renderYouTube(container, src.id, posterPicture, posterImg, autoplay);
   } else if (src.kind === 'file') {
-    renderFile(container, src.src, posterUrl);
+    renderFile(container, src.src, posterUrl, autoplay);
   } else if (src.kind === 'probe') {
-    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl);
+    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl, autoplay);
     else showError(container);
   }
 }
 
 export default function decorate(block) {
+  const autoplay = block.classList.contains('autoplay');
   const link = block.querySelector('a[href]');
   const textUrl = link ? null : (block.textContent.match(/https?:\/\/\S+|[\w-]{11}/) || [])[0];
   const url = link ? link.getAttribute('href') : textUrl;
   const posterPicture = block.querySelector('picture');
   const posterImg = posterPicture ? null : block.querySelector('img');
-  renderInto(block, url, posterPicture, posterImg);
+  renderInto(block, url, posterPicture, posterImg, autoplay, forcedKind(block));
 }
 
 /**
- * Converts stray video links anywhere in `main` into the player.
+ * Converts stray video links anywhere in `main` into a click-to-play player.
  * Skips links already inside a .video.block (handled by the named block)
  * and links in site chrome (header/footer/nav). This is what makes a
- * YouTube / Scene7 / mp4 URL work inside a columns cell.
+ * YouTube / Scene7 / mp4 URL work inside a columns cell. Click-to-play only
+ * (never autoplay) so it never slows the host page.
  */
 export function autoVideo(main) {
   main.querySelectorAll('a[href]').forEach((a) => {
@@ -248,10 +309,9 @@ export function autoVideo(main) {
       wrapper.className = 'video block';
       const host = a.closest('p') || a;
       host.replaceWith(wrapper);
-      renderInto(wrapper, href);
+      renderInto(wrapper, href, null, null, false);
     };
     if (src.kind === 'probe') {
-      // confirm it is really a video before replacing the author's link
       isVideoUrl(src.src).then((ok) => { if (ok) convert(); });
     } else {
       convert();
