@@ -201,7 +201,14 @@ function renderFile(container, src, posterUrl, autoplay) {
     video.src = src;
     video.controls = true;
     video.playsInline = true;
-    if (muted) { video.muted = true; video.setAttribute('muted', ''); }
+    // Muted autoplay = ambient/background use, so loop it. A click-to-play
+    // video is a normal player and must not loop forever.
+    if (muted) {
+      video.muted = true;
+      video.setAttribute('muted', '');
+      video.loop = true;
+      video.setAttribute('loop', '');
+    }
     video.preload = 'metadata';
     if (posterUrl) video.poster = posterUrl;
     return video;
