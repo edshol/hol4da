@@ -5,22 +5,45 @@
 
 .hero {
   position: relative;
-  padding: 40px 24px;
-  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: clamp(360px, 55vh, 560px);
+  padding: 48px 24px;
+  overflow: hidden;
+  text-align: center;
+  color: #fff;
+}
+
+/* darkening scrim so overlaid text stays readable on any image */
+.hero::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(0 0 0 / 25%) 0%, rgb(0 0 0 / 60%) 100%);
 }
 
 .hero h1 {
-  max-width: 1200px;
-  margin-left: auto;
-  margin-right: auto;
-  color: var(--background-color);
+  max-width: 1000px;
+  margin: 0 auto 0.3em;
+  color: #fff;
+  text-shadow: 0 2px 14px rgb(0 0 0 / 55%);
+}
+
+.hero p {
+  max-width: 720px;
+  margin: 0 auto;
+  color: #fff;
+  font-size: 1.25rem;
+  text-shadow: 0 1px 10px rgb(0 0 0 / 55%);
 }
 
 .hero picture {
   position: absolute;
-  z-index: -1;
+  z-index: -2;
   inset: 0;
-  object-fit: cover;
   box-sizing: border-box;
 }
 
@@ -32,6 +55,6 @@
 
 @media (width >= 900px) {
   .hero {
-    padding: 40px 32px;
+    padding: 56px 32px;
   }
 }
