@@ -2,14 +2,20 @@
  * Video Block
  * Lightweight, performance-first inline player.
  *
- * DEFAULT = click-to-play: only a poster facade renders on load; nothing is
- * fetched (no YouTube iframe, no <video> stream) until the visitor clicks.
- * This keeps the page fast and lets Lighthouse/PageSpeed score high, because
- * the heavy player is never loaded during an automated run.
+ * Playback defaults by source kind (native <video> is cheap to autoplay, the
+ * YouTube embed is not):
+ *  - Direct file / Dynamic Media (Scene7) -> muted autoplay when scrolled into
+ *    view (IntersectionObserver), paused when it leaves. A native <video> has
+ *    no heavy player JS, so this does not freeze the page or wreck PageSpeed.
+ *  - YouTube -> click-to-play: only a poster facade renders on load; the ~0.5MB
+ *    embed is fetched only when the visitor clicks. This keeps the page fast
+ *    and lets Lighthouse/PageSpeed score high (the heavy player never loads
+ *    during an automated run).
  *
- * VARIANT "autoplay" (block name "Video autoplay") = muted autoplay when the
- * block scrolls into view (IntersectionObserver), paused when it leaves. Use
- * only where the motion matters more than the performance budget.
+ * VARIANT "autoplay" (block name "Video youtube autoplay") = force muted
+ * autoplay for YouTube too. Use only where the motion matters more than the
+ * performance budget. (File/DM already autoplay, so the class is redundant
+ * there.)
  *
  * Supported sources (see classifySource):
  *  - YouTube / youtu.be                      -> privacy-friendly iframe
@@ -259,8 +265,11 @@ function forcedKind(block) {
 
 /** Render whatever `url` resolves to into `container` (a .video.block element).
     `forced` ('youtube' | 'file' | null) comes from a source-type variant and,
-    when set, bypasses classifySource so no HEAD probe is made. */
-async function renderInto(container, url, posterPicture, posterImg, autoplay, forced) {
+    when set, bypasses classifySource so no HEAD probe is made.
+    `autoplayFiles` autoplays native-video sources (file / Scene7) muted by
+    default — cheap and freeze-free, unlike the YouTube embed, which autoplays
+    only when `autoplay` is set. */
+async function renderInto(container, url, posterPicture, posterImg, autoplay, forced, autoplayFiles = false) {
   let src;
   if (forced === 'youtube') {
     src = { kind: 'youtube', id: parseYouTubeId(url) };
@@ -274,9 +283,9 @@ async function renderInto(container, url, posterPicture, posterImg, autoplay, fo
   if (src.kind === 'youtube') {
     renderYouTube(container, src.id, posterPicture, posterImg, autoplay);
   } else if (src.kind === 'file') {
-    renderFile(container, src.src, posterUrl, autoplay);
+    renderFile(container, src.src, posterUrl, autoplay || autoplayFiles);
   } else if (src.kind === 'probe') {
-    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl, autoplay);
+    if (await isVideoUrl(src.src)) renderFile(container, src.src, posterUrl, autoplay || autoplayFiles);
     else showError(container);
   }
 }
@@ -288,7 +297,9 @@ export default function decorate(block) {
   const url = link ? link.getAttribute('href') : textUrl;
   const posterPicture = block.querySelector('picture');
   const posterImg = posterPicture ? null : block.querySelector('img');
-  renderInto(block, url, posterPicture, posterImg, autoplay, forcedKind(block));
+  // Named Video block: autoplay file/DM sources muted by default (YouTube
+  // stays click-to-play unless the `autoplay` class is present).
+  renderInto(block, url, posterPicture, posterImg, autoplay, forcedKind(block), true);
 }
 
 /**
