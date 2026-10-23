@@ -1,6 +1,7 @@
 .hero-video.block {
   position: relative;
   display: flex;
+  box-sizing: border-box;
   align-items: center;
   justify-content: center;
   min-height: clamp(420px, 70vh, 720px);
@@ -42,16 +43,22 @@
 /* (contain): show the whole frame instead of cropping to fill */
 .hero-video.contain .hero-video-bg video { object-fit: contain; }
 
-/* YouTube background: scale the 16:9 iframe to cover the hero */
+/* YouTube background: scale the 16:9 iframe to cover the hero.
+   min-width/height are relative to the bg box, so the iframe is never narrower
+   or shorter than the hero itself — this is what kills the black side bars when
+   the hero is wider than 16:9 (e.g. the short, full-width variant). 177.78vh
+   additionally covers very tall viewports. */
 .hero-video .hero-video-bg iframe {
   position: absolute;
   top: 50%;
   left: 50%;
   width: 100vw;
   height: 56.25vw; /* 16:9 */
-  min-width: 177.78vh; /* cover tall viewports */
+  min-width: max(100%, 177.78vh);
   min-height: 100%;
-  transform: translate(-50%, -50%);
+  /* scale(1.02): a 2% overscan (aspect preserved) so sub-pixel rounding and the
+     scrollbar's slice of 100vw can never leave a black sliver at the edges. */
+  transform: translate(-50%, -50%) scale(1.02);
   border: 0;
   pointer-events: none;
 }
