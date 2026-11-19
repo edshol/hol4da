@@ -94,6 +94,34 @@ export function resolveOrigin(origins, { search = window.location.search, cookie
   return hit || origins.keys().next().value;
 }
 
+const jsonRequests = new Map();
+function getJson(url) {
+  if (!jsonRequests.has(url)) {
+    jsonRequests.set(url, fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null));
+  }
+  return jsonRequests.get(url);
+}
+
+/**
+ * Fare API adapter. Supports:
+ *  - per-route endpoint returning { price, currency } or { data: { price, currency } }
+ *  - a sheet (e.g. /fares.json) with columns Origin | Destination | Price | Currency
+ */
+export function pickFare(json, origin, destination) {
+  if (!json) return null;
+  const sheet = json.fares || json.data;
+  const rows = Array.isArray(sheet) ? sheet : sheet?.data;
+  const data = Array.isArray(rows)
+    ? rows.find((r) => `${r.Origin || ''}`.trim().toUpperCase() === origin
+      && `${r.Destination || ''}`.trim().toUpperCase() === destination)
+    : (json.data || json);
+  if (!data) return null;
+  const raw = `${data.price ?? data.Price ?? data.amount ?? ''}`.replace(/,/g, '').trim();
+  const price = Number(raw);
+  if (!raw || !Number.isFinite(price)) return null;
+  return { price, currency: `${data.currency || data.Currency || 'MYR'}`.trim() };
+}
+
 async function fetchFare(template, origin, destination) {
   if (!template) return null;
   const cacheKey = `lfd:${origin}-${destination}`;
@@ -105,23 +133,13 @@ async function fetchFare(template, origin, destination) {
   const url = template
     .replace('{origin}', encodeURIComponent(origin))
     .replace('{destination}', encodeURIComponent(destination));
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    // Adapter: accepts { price, currency } or { data: { price, currency } }.
-    // Adjust to MAG's fare API.
-    const data = json.data || json;
-    const price = Number(data.price ?? data.amount);
-    if (!Number.isFinite(price)) return null;
-    const fare = { price, currency: data.currency || 'MYR' };
+  const fare = pickFare(await getJson(url), origin, destination);
+  if (fare) {
     try {
       sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), fare }));
     } catch (e) { /* ignore */ }
-    return fare;
-  } catch (e) {
-    return null;
   }
+  return fare;
 }
 
 function formatFare({ price, currency }) {

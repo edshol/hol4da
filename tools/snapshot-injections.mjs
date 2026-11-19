@@ -29,7 +29,8 @@ if (!resp.ok) {
   process.exit(1);
 }
 const json = await resp.json();
-const rows = (json.scripts?.data || json.data || [])
+const sheet = json.scripts || json.data;
+const rows = ((Array.isArray(sheet) ? sheet : sheet?.data) || [])
   .map((row) => ({ ...row, id: `${row.ID || ''}`.trim() }))
   .filter((row) => SAFE_ID.test(row.id));
 

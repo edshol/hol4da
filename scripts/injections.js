@@ -33,13 +33,16 @@ const DESKTOP_MQ = '(min-width: 900px)';
 const PHASES = ['eager', 'lazy', 'delayed'];
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
+/** Rows of a sheet: accepts [..] or { data: [..] } (single- and multi-sheet JSON). */
+export const sheetRows = (sheet) => (Array.isArray(sheet) ? sheet : sheet?.data) || [];
+
 const isTrue = (v) => /^(true|yes|on|1)$/i.test(`${v ?? ''}`.trim());
 const isOff = (v) => /^(false|no|off|0)$/i.test(`${v ?? ''}`.trim());
 
 /** Pure selection logic (unit-testable): which injections run on this page. */
 export function selectInjections(json, ctx) {
-  const rows = json?.scripts?.data || json?.data || [];
-  const settings = Object.fromEntries((json?.settings?.data || [])
+  const rows = sheetRows(json?.scripts || json?.data);
+  const settings = Object.fromEntries(sheetRows(json?.settings)
     .map((r) => [`${r.Key || ''}`.trim().toLowerCase(), r.Value]));
   if (isOff(settings.enabled)) return [];
 

@@ -111,7 +111,8 @@ export async function loadOverrides({ url = OVERRIDES_URL } = {}) {
     path: window.location.pathname.replace(/\.html$/, ''),
     isDesktop: window.matchMedia(DESKTOP_MQ).matches,
   };
-  const rules = (json.data || [])
+  const sheet = json.overrides || json.data;
+  const rules = ((Array.isArray(sheet) ? sheet : sheet?.data) || [])
     .map((r, i) => ({ ...r, id: `ov${i}`, action: (r.Action || '').trim().toLowerCase() }))
     .filter((r) => isActive(r, ctx));
   if (!rules.length) return;
