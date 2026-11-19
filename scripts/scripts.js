@@ -11,6 +11,8 @@ import {
   loadSections,
   loadCSS,
 } from './aem.js';
+import { loadOverrides } from './overrides.js';
+import { loadInjections, runInjections } from './injections.js';
 
 /**
  * Moves all the attributes from a given elmenet to another given element.
@@ -92,6 +94,10 @@ export function decorateMain(main) {
 async function loadEager(doc) {
   document.documentElement.lang = 'en';
   decorateTemplateAndTheme();
+  // Page overrides / authored JS injections: start fetching early, never block LCP.
+  loadOverrides();
+  loadInjections();
+  runInjections('eager');
   const main = doc.querySelector('main');
   if (main) {
     decorateMain(main);
@@ -137,6 +143,8 @@ async function loadLazy(doc) {
 
   loadCSS(`${window.hlx.codeBasePath}/styles/lazy-styles.css`);
   loadFonts();
+
+  runInjections('lazy');
 }
 
 /**
@@ -145,7 +153,10 @@ async function loadLazy(doc) {
  */
 function loadDelayed() {
   // eslint-disable-next-line import/no-cycle
-  window.setTimeout(() => import('./delayed.js'), 3000);
+  window.setTimeout(() => {
+    runInjections('delayed');
+    import('./delayed.js');
+  }, 3000);
   // load anything that can be postponed to the latest here
 }
 
