@@ -1,0 +1,134 @@
+.low-fare-destinations {
+  --lfd-radius: 16px;
+  --lfd-gap: 16px;
+  --lfd-title-color: #1b3d6e;
+
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.low-fare-destinations .lfd-title {
+  margin: 0 0 24px;
+  text-align: center;
+  color: var(--lfd-title-color);
+}
+
+.low-fare-destinations .lfd-tiles {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 75%;
+  gap: var(--lfd-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+
+.low-fare-destinations .lfd-tile {
+  scroll-snap-align: start;
+}
+
+.low-fare-destinations .lfd-tile-inner {
+  position: relative;
+  display: block;
+  height: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--lfd-radius);
+  overflow: hidden;
+  color: #fff;
+  text-decoration: none;
+}
+
+.low-fare-destinations .lfd-tile-inner picture,
+.low-fare-destinations .lfd-tile-inner img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.low-fare-destinations .lfd-tile-inner:hover img {
+  transform: scale(1.05);
+}
+
+.low-fare-destinations .lfd-tile-inner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgb(0 30 80 / 70%), transparent 55%);
+}
+
+.low-fare-destinations .lfd-tile-text {
+  position: absolute;
+  inset: auto 20px 20px;
+  z-index: 1;
+}
+
+.low-fare-destinations .lfd-tile-text p {
+  margin: 0;
+  line-height: 1.3;
+}
+
+.low-fare-destinations .lfd-name {
+  font-size: var(--heading-font-size-s, 22px);
+  font-weight: 700;
+}
+
+.low-fare-destinations .lfd-label {
+  font-size: var(--body-font-size-xs, 14px);
+  font-weight: 600;
+}
+
+.low-fare-destinations .lfd-price {
+  min-height: 1.3em;
+  font-size: var(--heading-font-size-s, 22px);
+  font-weight: 700;
+}
+
+/* hide the "from" label when no price can be shown */
+.low-fare-destinations.no-price .lfd-label,
+.low-fare-destinations .lfd-tile.price-unavailable .lfd-label {
+  display: none;
+}
+
+.low-fare-destinations .lfd-view-all {
+  margin-top: 32px;
+  text-align: center;
+}
+
+@media (width >= 900px) {
+  .low-fare-destinations .lfd-tiles {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-columns: auto;
+    overflow: visible;
+  }
+
+  .low-fare-destinations .lfd-tile-inner {
+    aspect-ratio: auto;
+    height: 260px;
+  }
+
+  /* variant-2 (3 tiles per row): wide tile first on odd rows, last on even rows */
+  .low-fare-destinations.variant-2 .lfd-tile:nth-child(6n + 1),
+  .low-fare-destinations.variant-2 .lfd-tile:nth-child(6n) {
+    grid-column: span 2;
+  }
+
+  /* variant-1: plain 3-column grid */
+  .low-fare-destinations.variant-1 .lfd-tiles {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .low-fare-destinations.hide-desktop {
+    display: none;
+  }
+}
+
+@media (width < 900px) {
+  .low-fare-destinations.hide-mobile {
+    display: none;
+  }
+}
